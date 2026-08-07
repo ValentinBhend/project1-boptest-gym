@@ -15,6 +15,7 @@ from testing import utilities
 from examples import run_baseline, run_sample, run_save_callback,\
     run_variable_episode, run_vectorized, run_multiaction, train_RL
 from collections import OrderedDict
+import boptestGymEnv
 from boptestGymEnv import BoptestGymEnv
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -618,6 +619,171 @@ class BoptestGymEnvMultiActTest(unittest.TestCase, utilities.partialChecks):
 
         # stop the environment to not overload the server
         env.stop()
+
+
+class BoptestClientTest(unittest.TestCase):
+    '''Tests the client that carries every request to BOPTEST.
+
+    These do not need a deployed test case: the requests module is replaced by
+    a stub, so that the behaviour against BOPTEST versions that do and do not
+    support requesting a subset of the KPIs can both be checked.
+
+    '''
+
+    def setUp(self):
+        '''Replace boptestGymEnv's requests module with a stub.
+
+        '''
+
+        self.calls = []
+        self.responses = {}
+        self.real_requests = boptestGymEnv.requests
+        boptestGymEnv.requests = self
+
+    def tearDown(self):
+        boptestGymEnv.requests = self.real_requests
+
+    # --- the stub requests module --------------------------------------------
+
+    class _Response(object):
+        def __init__(self, body, status_code=200, text=''):
+            self._body, self.status_code, self.text = body, status_code, text
+
+        def json(self):
+            if self._body is None:
+                raise ValueError('not json')
+            return self._body
+
+    def _record(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        for pattern, response in self.responses.items():
+            if pattern in url:
+                return response(kwargs) if callable(response) else response
+        return self._Response({'status': 200, 'message': '', 'payload': {}})
+
+    def get(self, url, **kwargs):
+        return self._record('get', url, **kwargs)
+
+    def put(self, url, **kwargs):
+        return self._record('put', url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self._record('post', url, **kwargs)
+
+    # --- tests ---------------------------------------------------------------
+
+    def _client(self, **kwargs):
+        self.responses['select'] = self._Response({'testid': 'a-test-id'})
+        return boptestGymEnv.BoptestClient(url, 'bestest_hydronic_heat_pump',
+                                           **kwargs)
+
+    def test_fast_is_only_sent_when_asked_for(self):
+        '''Test that the fast option is left out of the select body unless it
+        was requested, so that the deployment keeps its own default.
+
+        '''
+
+        self._client()
+        self.assertEqual(self.calls[-1][2]['json'], {})
+        self.calls = []
+        self._client(fast=True)
+        self.assertEqual(self.calls[-1][2]['json'], {'fast': True})
+
+    def test_timeout_is_passed_to_every_request(self):
+        '''Test that the request timeout reaches every call, not only some.
+
+        '''
+
+        client = self._client(timeout=12)
+        client.get('name')
+        client.put('step', json={'step': 900})
+        client.post('advance', json={})
+        client.stop()
+        for method, url, kwargs in self.calls:
+            self.assertEqual(kwargs.get('timeout'), 12,
+                             'No timeout on {0} {1}'.format(method, url))
+
+    def test_kpi_subset_when_the_server_supports_it(self):
+        '''Test that only the named KPIs are requested and returned.
+
+        '''
+
+        client = self._client()
+        self.responses['kpi'] = self._Response(
+            {'payload': {'cost_tot': 1.0, 'tdis_tot': 2.0}})
+        kpis = client.kpis(names=boptestGymEnv.REWARD_KPIS)
+        self.assertEqual(sorted(kpis), sorted(boptestGymEnv.REWARD_KPIS))
+        self.assertEqual(self.calls[-1][2]['params'],
+                         {'names': ','.join(boptestGymEnv.REWARD_KPIS)})
+        self.assertTrue(client._kpi_subset_supported)
+
+    def test_falls_back_when_the_server_ignores_names(self):
+        '''Test the case of a BOPTEST that predates the names parameter: it
+        ignores it and returns every KPI, which still contains what the reward
+        reads, so the request must succeed rather than fail.
+
+        '''
+
+        client = self._client()
+        every_kpi = {'cost_tot': 1.0, 'tdis_tot': 2.0, 'ener_tot': 3.0,
+                     'pele_tot': 4.0}
+        self.responses['kpi'] = self._Response({'payload': dict(every_kpi)})
+        kpis = client.kpis(names=boptestGymEnv.REWARD_KPIS)
+        self.assertEqual(sorted(kpis), sorted(every_kpi))
+
+    def test_falls_back_when_the_server_rejects_names(self):
+        '''Test the case of a BOPTEST that rejects the parameter: the client
+        asks again for everything and then stops asking for a subset.
+
+        '''
+
+        client = self._client()
+        every_kpi = {'cost_tot': 1.0, 'tdis_tot': 2.0, 'ener_tot': 3.0}
+
+        def kpi_response(kwargs):
+            if kwargs.get('params'):
+                return self._Response({'status': 400, 'message': 'bad names',
+                                       'payload': None})
+            return self._Response({'payload': dict(every_kpi)})
+
+        self.responses['kpi'] = kpi_response
+        kpis = client.kpis(names=boptestGymEnv.REWARD_KPIS)
+        self.assertEqual(sorted(kpis), sorted(every_kpi))
+        self.assertFalse(client._kpi_subset_supported)
+
+        # ...and the next reward does not pay for the failed attempt again
+        self.calls = []
+        client.kpis(names=boptestGymEnv.REWARD_KPIS)
+        self.assertEqual(len(self.calls), 1)
+        self.assertIsNone(self.calls[0][2].get('params'))
+
+    def test_error_reports_the_server_message(self):
+        '''Test that a failed request says what BOPTEST reported, instead of
+        raising KeyError: 'payload'.
+
+        '''
+
+        client = self._client()
+        self.responses['name'] = self._Response(
+            {'status': 400, 'message': 'No worker available'})
+        with self.assertRaises(RuntimeError) as caught:
+            client.get('name')
+        self.assertIn('No worker available', str(caught.exception))
+
+    def test_error_reports_a_non_json_body(self):
+        '''Test that a response that is not JSON at all, such as the plain
+        text `404 Not Found` returned when the test case does not exist, is
+        reported with its status code rather than raising a JSON decoding
+        error.
+
+        '''
+
+        self.responses['select'] = self._Response(None, status_code=404,
+                                                  text='Not Found')
+        with self.assertRaises(RuntimeError) as caught:
+            boptestGymEnv.BoptestClient(url, 'no_such_testcase')
+        self.assertIn('404', str(caught.exception))
+        self.assertIn('no_such_testcase', str(caught.exception))
 
 
 if __name__ == '__main__':
