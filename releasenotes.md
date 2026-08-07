@@ -10,6 +10,7 @@ BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simpli
 - Add a ``request_timeout`` argument to ``BoptestGymEnv``, applied to every request. Default is ``None``, which is the current behaviour of waiting forever. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Request only the KPIs that the reward reads, listed in the new ``REWARD_KPIS``, rather than the full set on every control step. A BOPTEST that does not support the ``names`` argument of the ``kpi`` API returns the full set, so this falls back silently. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Remove a duplicated definition of ``BoptestGymEnv.stop``.
+- Add an optional in-process backend, selected with ``local=True``, which runs BOPTEST's own ``TestCase`` in the calling process instead of talking to a web service, so that a step involves no HTTP request, no redis round trip and no JSON encoding. Default is ``False``. It requires ``pyfmi``, a BOPTEST source tree given by ``boptest_root`` or the ``BOPTEST_ROOT`` environment variable, and one environment per process, since every BOPTEST test case FMU declares ``canBeInstantiatedOnlyOncePerProcess=true``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 
 ## BOPTEST-Gym v0.8.0
 
