@@ -100,6 +100,7 @@ Then you can train an RL agent with parallel learning with the vectorized BOPTES
 
 - `fast=True` asks the BOPTEST runtime to use its low-overhead simulation path, which steps the emulator FMU directly instead of building a simulation algorithm and result handler for every control step. Measurements and KPIs are unchanged. It is sent as a request when the test case is selected, so a BOPTEST deployment that does not support it simply ignores it and everything keeps working.
 
+- `request_timeout=<seconds>` bounds how long any single request to BOPTEST may take. Without it a request issued against a test that is still queued waiting for a free worker never returns.
 - `warmup_interval=<seconds>` coarsens the warmup simulation that every episode reset performs. The default of 30 reproduces earlier behaviour. A larger value makes resets cheaper but slightly moves the state reached at the start time, and with it the reported KPIs; control steps always use 30 s. A BOPTEST that does not support it ignores it.
 
 Independently of those, the reward now asks BOPTEST only for the KPIs it reads (`cost_tot` and `tdis_tot`, listed in `REWARD_KPIS`) rather than for all of them. The peak demand KPIs are maxima over the whole test period and so get more expensive the longer an episode runs, while these two do not. A BOPTEST that does not support requesting a subset returns the full set, which is still correct, so this needs no configuration and never fails.
