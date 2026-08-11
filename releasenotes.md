@@ -8,6 +8,9 @@ BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simpli
 - Route every request to BOPTEST through a new ``BoptestClient`` object instead of calling ``requests`` inline in 21 places. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Add ``direct_step``, ``fmu_log_level`` and ``log_level`` arguments to ``BoptestGymEnv``, sent when selecting the test case, which ask BOPTEST to step the emulator FMU directly and to log less. Each is unset by default. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Add a ``warmup_interval`` argument to ``BoptestGymEnv``, sent with each episode reset, which sets the warmup communication grid. Default is ``None``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Add a ``request_timeout`` argument to ``BoptestGymEnv``, applied to every request. Default is ``None``, which waits forever as before. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Report the message BOPTEST returned when a request fails, instead of raising ``KeyError: 'payload'``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Remove a duplicated definition of ``BoptestGymEnv.stop``.
 - Request only the KPIs the reward reads, listed in the new ``REWARD_KPIS``, rather than the full set on every control step. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 
 ## BOPTEST-Gym v0.8.0

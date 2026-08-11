@@ -677,10 +677,10 @@ class BoptestClientTest(unittest.TestCase):
 
     # --- tests ---------------------------------------------------------------
 
-    def _client(self, select_options=None):
+    def _client(self, select_options=None, **kwargs):
         self.stub.responses['select'] = StubRequests.Response({'testid': 'a-test-id'})
         return boptestGymEnv.BoptestClient(url, 'bestest_hydronic_heat_pump',
-                                           select_options or {})
+                                           select_options or {}, **kwargs)
 
     def test_select_options_are_sent_as_given(self):
         '''Test that the select body carries exactly the options asked for, so
@@ -694,6 +694,20 @@ class BoptestClientTest(unittest.TestCase):
         self._client({'direct_step': True, 'fmu_log_level': 0})
         self.assertEqual(self.stub.calls[-1][2]['json'],
                          {'direct_step': True, 'fmu_log_level': 0})
+
+    def test_timeout_is_passed_to_every_request(self):
+        '''Test that the request timeout reaches every call, not only some.
+
+        '''
+
+        client = self._client(timeout=12)
+        client.get('name')
+        client.put('step', json={'step': 900})
+        client.post('advance', json={})
+        client.stop()
+        for method, url, kwargs in self.stub.calls:
+            self.assertEqual(kwargs.get('timeout'), 12,
+                             'No timeout on {0} {1}'.format(method, url))
 
     def test_kpi_subset_when_the_server_supports_it(self):
         '''Test that only the named KPIs are requested and returned.
@@ -749,6 +763,34 @@ class BoptestClientTest(unittest.TestCase):
         self.assertEqual(len(self.stub.calls), 1)
         self.assertIsNone(self.stub.calls[0][2].get('params'))
 
+
+    def test_error_reports_the_server_message(self):
+        '''Test that a failed request says what BOPTEST reported, instead of
+        raising KeyError: 'payload'.
+
+        '''
+
+        client = self._client()
+        self.stub.responses['name'] = StubRequests.Response(
+            {'status': 400, 'message': 'No worker available'})
+        with self.assertRaises(RuntimeError) as caught:
+            client.get('name')
+        self.assertIn('No worker available', str(caught.exception))
+
+    def test_error_reports_a_non_json_body(self):
+        '''Test that a response that is not JSON at all, such as the plain
+        text `404 Not Found` returned when the test case does not exist, is
+        reported with its status code rather than raising a JSON decoding
+        error.
+
+        '''
+
+        self.stub.responses['select'] = StubRequests.Response(None, status_code=404,
+                                                  text='Not Found')
+        with self.assertRaises(RuntimeError) as caught:
+            boptestGymEnv.BoptestClient(url, 'no_such_testcase', {})
+        self.assertIn('404', str(caught.exception))
+        self.assertIn('no_such_testcase', str(caught.exception))
 
 if __name__ == '__main__':
     # utilities.run_tests(os.path.basename(__file__))
