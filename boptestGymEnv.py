@@ -37,7 +37,7 @@ class BoptestClient(object):
 
     '''
 
-    def __init__(self, url, testcase, fast=False):
+    def __init__(self, url, testcase, fast=False, timeout=None):
         '''Select a test case and remember its identifier.
 
         Parameters
@@ -51,26 +51,74 @@ class BoptestClient(object):
             path. Sent only as a request: a BOPTEST that does not know the
             option ignores it, so this stays compatible with deployments that
             do not support it.
+        timeout: float, optional
+            Seconds to wait for any single request. None waits forever, which
+            is what `requests` does by default and is rarely what is wanted:
+            a request issued against a test that is still queued for a worker
+            otherwise never returns.
 
         '''
 
         self.url = url.rstrip('/')
+        self.timeout = timeout
         self._kpi_subset_supported = True
         body = {'fast': True} if fast else {}
-        self.testid = requests.post('{0}/testcases/{1}/select'.format(self.url, testcase),
-                                    json=body).json()['testid']
+        response = requests.post('{0}/testcases/{1}/select'.format(self.url, testcase),
+                                 json=body, timeout=self.timeout)
+        selection = self._json(response, 'select {0}'.format(testcase))
+        if 'testid' not in selection:
+            raise RuntimeError('Could not select testcase "{0}": {1}'
+                               .format(testcase, selection))
+        self.testid = selection['testid']
+
+    def _json(self, response, what):
+        '''Decode a BOPTEST response body, reporting the status code if it is
+        not JSON at all.
+
+        BOPTEST answers some errors with a plain text body rather than the
+        usual JSON, for instance `404 Not Found` with the body `Not Found`
+        when the test case does not exist. Decoding that raises a
+        `JSONDecodeError` that says nothing about what was asked for.
+
+        '''
+
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError('BOPTEST returned status {0} for "{1}" with a '
+                               'body that is not JSON: {2!r}'
+                               .format(response.status_code, what,
+                                       response.text[:200]))
+
+    def _payload(self, response, endpoint):
+        '''Unwrap a BOPTEST response, saying what went wrong when it failed.
+
+        Reading `response['payload']` directly turns any server side error
+        into a bare `KeyError: 'payload'`, which hides the actual message,
+        including the one BOPTEST returns when no worker is free.
+
+        '''
+
+        body = self._json(response, endpoint)
+        if 'payload' not in body:
+            raise RuntimeError('BOPTEST request to "{0}" failed: {1}'
+                               .format(endpoint, body))
+        return body['payload']
 
     def get(self, endpoint, params=None):
-        return requests.get('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                            params=params).json()['payload']
+        return self._payload(
+            requests.get('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                         params=params, timeout=self.timeout), endpoint)
 
     def put(self, endpoint, json=None):
-        return requests.put('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                            json=json).json()['payload']
+        return self._payload(
+            requests.put('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                         json=json, timeout=self.timeout), endpoint)
 
     def post(self, endpoint, json=None):
-        return requests.post('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                             json=json).json()['payload']
+        return self._payload(
+            requests.post('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                          json=json, timeout=self.timeout), endpoint)
 
     def kpis(self, names=None):
         '''Return the core KPIs, optionally only the ones named.
@@ -92,7 +140,8 @@ class BoptestClient(object):
         return self.get('kpi')
 
     def stop(self):
-        requests.put('{0}/stop/{1}'.format(self.url, self.testid))
+        requests.put('{0}/stop/{1}'.format(self.url, self.testid),
+                     timeout=self.timeout)
 
 
 class BoptestGymEnv(gym.Env):
@@ -122,7 +171,8 @@ class BoptestGymEnv(gym.Env):
                  step_period        = 900,
                  render_episodes    = False,
                  log_dir            = os.getcwd(),
-                 fast               = False):
+                 fast               = False,
+                 request_timeout    = None):
         '''
         Parameters
         ----------
@@ -210,6 +260,12 @@ class BoptestGymEnv(gym.Env):
             request when the test case is selected, so a BOPTEST deployment
             that does not support the option simply ignores it.
             Default is False.
+        request_timeout: float
+            Seconds to wait for any single request to BOPTEST. None waits
+            forever, which is what happens today and is rarely wanted: a
+            request issued against a test still queued for a worker never
+            returns.
+            Default is None.
 
         '''
         
@@ -232,6 +288,7 @@ class BoptestGymEnv(gym.Env):
         self.render_episodes    = render_episodes
         self.log_dir            = log_dir
         self.fast               = fast
+        self.request_timeout    = request_timeout
 
         # Avoid requesting data before the beginning of the year
         if self.regressive_period is not None:
@@ -251,7 +308,8 @@ class BoptestGymEnv(gym.Env):
         except:
             pass
         # Select and start a new test case
-        self.client = BoptestClient(url, testcase, fast=fast)
+        self.client = BoptestClient(url, testcase, fast=fast,
+                                    timeout=request_timeout)
         self.testid = self.client.testid
         # Test case name
         self.name = self.client.get('name')
@@ -585,14 +643,6 @@ class BoptestGymEnv(gym.Env):
         self.episode_rewards = []
 
         return observations, info
-
-    def stop(self):
-        '''
-        Stop the test case
-
-        '''
-
-        self.client.stop()
 
     def stop(self):
         '''
