@@ -96,6 +96,16 @@ docker compose up --scale worker=2 web worker provision
 
 Then you can train an RL agent with parallel learning with the vectorized BOPTEST-gym environment. See [`/examples/run_vectorized.py`](https://github.com/ibpsa/project1-boptest-gym/blob/master/examples/run_vectorized.py) for an example on how to do so. 
 
+### Note 3: on reducing the overhead per step
+
+- `direct_step=True` asks BOPTEST to step the emulator FMU with `do_step` directly instead of building a simulation algorithm and result handler for every control step. Measurements and KPIs are unchanged. It is sent when the test case is selected, so a BOPTEST that does not support it simply ignores it.
+
+- `fmu_log_level=0` and `log_level='WARNING'` turn BOPTEST's logging down. Both are unset by default, leaving BOPTEST its own levels. On their own they change nothing measurable, because pyfmi's per-step overhead hides the logging cost; combined with `direct_step` they are worth a further 1.4x.
+
+- `warmup_interval=<seconds>` coarsens the warmup simulation that every episode reset performs. Left unset it is not sent at all, so BOPTEST keeps its own 30 s grid and earlier behaviour is reproduced. A larger value makes resets cheaper but slightly moves the state reached at the start time, and with it the reported KPIs; control steps always use 30 s. A BOPTEST that does not support it ignores it.
+
+Independently of those, the reward now asks BOPTEST only for the KPIs it reads (`cost_tot` and `tdis_tot`, listed in `REWARD_KPIS`) rather than for all of them. The peak demand KPIs are maxima over the whole test period and so get more expensive the longer an episode runs, while these two do not. A BOPTEST that does not support requesting a subset returns the full set, which is still correct, so this needs no configuration and never fails.
+
 ## Versioning and main dependencies
 
 Current BOPTEST-Gym version is `v0.8.0` which is compatible with BOPTEST `v0.8.0` 
