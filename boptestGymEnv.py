@@ -14,6 +14,9 @@ import pandas as pd
 import inspect
 import json
 import os
+import shutil
+import sys
+import tempfile
 
 from collections import OrderedDict
 from scipy import interpolate
@@ -89,6 +92,167 @@ class BoptestClient(object):
         requests.put('{0}/stop/{1}'.format(self.url, self.testid))
 
 
+class LocalClient(BoptestClient):
+    '''Runs a BOPTEST test case in this process, with no web service.
+
+    Requires pyfmi and a BOPTEST source tree with the test case FMUs.  The
+    distributed FMUs need libgfortran.so.4, which the BOPTEST worker image
+    provides and a current Linux distribution generally does not.
+
+    Only ONE such client may exist per process, since every BOPTEST test case
+    FMU declares canBeInstantiatedOnlyOncePerProcess=true and a second one
+    corrupts both silently.  Use SubprocVecEnv to run several environments.
+
+    '''
+
+    def __init__(self, url, testcase, fast,
+                 boptest_root=None, testcase_dir=None):
+        '''
+        Parameters
+        ----------
+        url: string
+            Ignored, kept so the two clients are interchangeable.
+        testcase: string
+            The string identifier of the testcase.
+        fast: boolean
+            True to use BOPTEST's low-overhead simulation path.
+        boptest_root: string, optional
+            Path to a BOPTEST source tree.  Defaults to the BOPTEST_ROOT
+            environment variable.
+        testcase_dir: string, optional
+            Directory holding the test case FMUs.  Defaults to
+            <boptest_root>/testcases.
+
+        '''
+
+        self._workdir = None
+        self._kpi_subset_supported = True
+
+        boptest_root = boptest_root or os.environ.get('BOPTEST_ROOT')
+        if not boptest_root:
+            raise ValueError(
+                'A local BOPTEST backend needs the BOPTEST source tree. Pass '
+                'boptest_root= or set the BOPTEST_ROOT environment variable '
+                'to a checkout of '
+                'https://github.com/ibpsa/project1-boptest.')
+        boptest_root = os.path.abspath(boptest_root)
+        for path in (boptest_root, os.path.join(boptest_root, 'kpis'),
+                     os.path.join(boptest_root, 'forecast'),
+                     os.path.join(boptest_root, 'data')):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        testcase_dir = testcase_dir or os.path.join(boptest_root, 'testcases')
+        fmupath = os.path.join(testcase_dir, testcase, 'models', 'wrapped.fmu')
+        if not os.path.isfile(fmupath):
+            raise IOError('No test case FMU at {0}. BOPTEST distributes these '
+                          'separately from the source tree.'.format(fmupath))
+
+        self.url = 'local'
+        self._workdir = tempfile.mkdtemp(prefix='boptestgym_{0}_'.format(testcase))
+        self.testid = os.path.basename(self._workdir)
+        shutil.copyfile(os.path.join(boptest_root, 'version.txt'),
+                        os.path.join(self._workdir, 'version.txt'))
+
+        from testcase import TestCase
+
+        # TestCase only needs the working directory while it is constructed
+        previous_cwd = os.getcwd()
+        os.chdir(self._workdir)
+        try:
+            forecast_params = os.path.join(boptest_root, 'forecast',
+                                           'forecast_uncertainty_params.json')
+            try:
+                self.case = TestCase(fmupath, forecast_params, fast=fast)
+            except TypeError:
+                # A BOPTEST without the fast option: correct, just slower
+                self.case = TestCase(fmupath, forecast_params)
+            # A BOPTEST without warmup_interval warms up on its own grid
+            self._warmup_interval_supported = 'warmup_interval' in \
+                inspect.signature(self.case.initialize).parameters
+        finally:
+            os.chdir(previous_cwd)
+
+    def _call(self, endpoint, method, *args, **kwargs):
+        '''Invoke a TestCase method and apply the REST layer's error contract.
+
+        '''
+
+        status, message, payload = method(*args, **kwargs)
+        if status != 200:
+            raise RuntimeError('BOPTEST "{0}" failed with status {1}: {2}'
+                               .format(endpoint, status, message))
+        return payload
+
+    def get(self, endpoint, params=None):
+        case = self.case
+        if endpoint == 'kpi':
+            names = None
+            if params and params.get('names'):
+                names = [n for n in str(params['names']).split(',') if n]
+            if names is None:
+                return self._call(endpoint, case.get_kpis)
+            try:
+                return self._call(endpoint, case.get_kpis, names)
+            except TypeError:
+                # A BOPTEST without the names argument: correct, just slower
+                self._kpi_subset_supported = False
+                return self._call(endpoint, case.get_kpis)
+        handlers = {'name': case.get_name,
+                    'measurements': case.get_measurements,
+                    'inputs': case.get_inputs,
+                    'forecast_points': case.get_forecast_points,
+                    'step': case.get_step,
+                    'scenario': case.get_scenario,
+                    'version': case.get_version}
+        if endpoint not in handlers:
+            raise ValueError('Unsupported local GET endpoint "{0}"'.format(endpoint))
+        return self._call(endpoint, handlers[endpoint])
+
+    def put(self, endpoint, json=None):
+        case = self.case
+        json = json or {}
+        if endpoint == 'initialize':
+            # Forward the warmup grid only when one was asked for
+            kwargs = {}
+            if json.get('warmup_interval') is not None \
+                    and self._warmup_interval_supported:
+                kwargs['warmup_interval'] = json['warmup_interval']
+            return self._call(endpoint, case.initialize,
+                              json['start_time'], json['warmup_period'],
+                              **kwargs)
+        if endpoint == 'step':
+            return self._call(endpoint, case.set_step, json['step'])
+        if endpoint == 'scenario':
+            # set_scenario reads every key, None to leave it unchanged
+            scenario = dict(json)
+            for key in ('electricity_price', 'time_period',
+                        'temperature_uncertainty', 'solar_uncertainty', 'seed'):
+                scenario.setdefault(key, None)
+            return self._call(endpoint, case.set_scenario, scenario)
+        if endpoint == 'results':
+            return self._call(endpoint, case.get_results, json['point_names'],
+                              json['start_time'], json['final_time'])
+        if endpoint == 'forecast':
+            return self._call(endpoint, case.get_forecast, json['point_names'],
+                              json['horizon'], json['interval'])
+        raise ValueError('Unsupported local PUT endpoint "{0}"'.format(endpoint))
+
+    def post(self, endpoint, json=None):
+        if endpoint == 'advance':
+            return self._call(endpoint, self.case.advance, json or {})
+        raise ValueError('Unsupported local POST endpoint "{0}"'.format(endpoint))
+
+    def stop(self):
+        '''Release the test case and remove its temporary directory.
+
+        '''
+
+        if self._workdir is not None:
+            shutil.rmtree(self._workdir, ignore_errors=True)
+            self._workdir = None
+
+
 class BoptestGymEnv(gym.Env):
     '''
     BOPTEST Environment that follows gym interface.
@@ -117,7 +281,9 @@ class BoptestGymEnv(gym.Env):
                  render_episodes    = False,
                  log_dir            = os.getcwd(),
                  fast               = False,
-                 warmup_interval    = None):
+                 warmup_interval    = None,
+                 local              = False,
+                 boptest_root       = None):
         '''
         Parameters
         ----------
@@ -210,6 +376,15 @@ class BoptestGymEnv(gym.Env):
             that does not support the option ignores it.
             Default is None, which leaves the grid to BOPTEST, where it is
             30 s.
+        local: boolean
+            True to run the test case in this process instead of talking to a
+            BOPTEST web service.  Requires pyfmi and a local BOPTEST source
+            tree with the test case FMUs, and only ONE such environment may
+            exist per process.  See LocalClient.
+            Default is False.
+        boptest_root: string
+            Path to a BOPTEST source tree, used only when local=True.
+            Defaults to the BOPTEST_ROOT environment variable.
 
         '''
         
@@ -233,6 +408,7 @@ class BoptestGymEnv(gym.Env):
         self.log_dir            = log_dir
         self.fast               = fast
         self.warmup_interval    = warmup_interval
+        self.local              = local
 
         # Avoid requesting data before the beginning of the year
         if self.regressive_period is not None:
@@ -251,8 +427,12 @@ class BoptestGymEnv(gym.Env):
             self.client.stop()
         except:
             pass
-        # Select and start a new test case
-        self.client = BoptestClient(url, testcase, fast=fast)
+        # Select and start a new test case, over REST or in this process
+        if self.local:
+            self.client = LocalClient(url, testcase, fast=fast,
+                                      boptest_root=boptest_root)
+        else:
+            self.client = BoptestClient(url, testcase, fast=fast)
         self.testid = self.client.testid
         # Test case name
         self.name = self.client.get('name')
