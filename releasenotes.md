@@ -5,9 +5,11 @@ BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simpli
 
 ## BOPTEST-Gym development
 
-- Route every request to BOPTEST through a new ``BoptestClient`` object instead of calling ``requests`` inline in twenty one places. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Route every request to BOPTEST through a new ``BoptestClient`` object instead of calling ``requests`` inline in twenty one places, and report the message BOPTEST returned when a request fails instead of raising ``KeyError: 'payload'``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Add a ``fast`` argument to ``BoptestGymEnv`` that asks the BOPTEST runtime for its low-overhead simulation path when selecting the test case. Default is ``False``. A BOPTEST that does not support the option ignores it. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Add a ``request_timeout`` argument to ``BoptestGymEnv``, applied to every request. Default is ``None``, which is the current behaviour of waiting forever. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Request only the KPIs that the reward reads, listed in the new ``REWARD_KPIS``, rather than the full set on every control step. A BOPTEST that does not support the ``names`` argument of the ``kpi`` API returns the full set, so this falls back silently. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Remove a duplicated definition of ``BoptestGymEnv.stop``.
 
 ## BOPTEST-Gym v0.8.0
 
