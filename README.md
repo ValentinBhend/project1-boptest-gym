@@ -96,6 +96,12 @@ docker compose up --scale worker=2 web worker provision
 
 Then you can train an RL agent with parallel learning with the vectorized BOPTEST-gym environment. See [`/examples/run_vectorized.py`](https://github.com/ibpsa/project1-boptest-gym/blob/master/examples/run_vectorized.py) for an example on how to do so. 
 
+### Note 3: on reducing the overhead per step
+
+- `fast=True` asks the BOPTEST runtime to use its low-overhead simulation path, which steps the emulator FMU directly instead of building a simulation algorithm and result handler for every control step. Measurements and KPIs are unchanged. It is sent as a request when the test case is selected, so a BOPTEST deployment that does not support it simply ignores it and everything keeps working.
+
+Independently of that, the reward now asks BOPTEST only for the KPIs it reads (`cost_tot` and `tdis_tot`, listed in `REWARD_KPIS`) rather than for all of them. The peak demand KPIs are maxima over the whole test period and so get more expensive the longer an episode runs, while these two do not. A BOPTEST that does not support requesting a subset returns the full set, which is still correct, so this needs no configuration and never fails.
+
 ## Versioning and main dependencies
 
 Current BOPTEST-Gym version is `v0.8.0` which is compatible with BOPTEST `v0.8.0` 
