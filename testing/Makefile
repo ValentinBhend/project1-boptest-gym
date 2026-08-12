@@ -109,9 +109,9 @@ cleanup-boptest:
 	-rm boptest.zip
 	-rm -r project1-boptest-${BOPTEST_COMMIT}
 
-# Does not need a running BOPTEST: the client is tested against a stub
+# Does not need a running BOPTEST: the clients are tested against stubs
 test-client:
-	python3 -m unittest test_boptestGymEnv.BoptestClientTest
+	python3 -m unittest test_boptestGymEnv.BoptestClientTest test_boptestGymEnv.LocalClientTest
 
 # Assumes bestest_hydronic_heat_pump test case is running
 test-local:
