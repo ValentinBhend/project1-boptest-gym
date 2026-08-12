@@ -106,6 +106,25 @@ Then you can train an RL agent with parallel learning with the vectorized BOPTES
 
 Independently of those, the reward now asks BOPTEST only for the KPIs it reads (`cost_tot` and `tdis_tot`, listed in `REWARD_KPIS`) rather than for all of them. The peak demand KPIs are maxima over the whole test period and so get more expensive the longer an episode runs, while these two do not. A BOPTEST that does not support requesting a subset returns the full set, which is still correct, so this needs no configuration and never fails.
 
+### Note 4: on running BOPTEST in the same process
+
+`local=True` runs BOPTEST's own `TestCase` inside the Python process that runs the agent, instead of talking to a web service. A step then involves no HTTP request, no redis round trip and no JSON encoding. Results are unchanged: the code that simulates is the same code the BOPTEST worker runs.
+
+```python
+env = BoptestGymEnv(testcase='bestest_hydronic_heat_pump',
+                    local=True,
+                    boptest_root='/path/to/project1-boptest',
+                    fast=True,
+                    ...)
+```
+
+Two requirements come with it, both from BOPTEST rather than from this repository:
+
+- **`pyfmi` must be importable and the test case FMU must load.** The distributed FMUs are JModelica built and need `libgfortran.so.4`, which the BOPTEST `worker` image provides and a current Linux distribution generally does not. Running inside that image is the supported way to satisfy this.
+- **One environment per process.** Every BOPTEST test case FMU declares `canBeInstantiatedOnlyOncePerProcess=true`, so a second test case in the same process corrupts both without reporting an error. To run several, give each its own process with [`SubprocVecEnv`](https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html#subprocvecenv), as in Note 2. Each environment process holds roughly 130 MB beyond what it shares, so budget about one environment per core rather than hundreds.
+
+`boptest_root` points at a checkout of [ibpsa/project1-boptest](https://github.com/ibpsa/project1-boptest) containing the test case FMUs, and defaults to the `BOPTEST_ROOT` environment variable. Each environment gets a temporary directory of its own for the files `TestCase` writes; `stop()` removes it.
+
 ## Versioning and main dependencies
 
 Current BOPTEST-Gym version is `v0.8.0` which is compatible with BOPTEST `v0.8.0` 
