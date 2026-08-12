@@ -8,6 +8,7 @@ BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simpli
 - Route every request to BOPTEST through a new ``BoptestClient`` object instead of calling ``requests`` inline in twenty one places. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Add a ``fast`` argument to ``BoptestGymEnv``, sent when selecting the test case, which asks BOPTEST for its low-overhead simulation path. Default is ``False``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Add a ``warmup_interval`` argument to ``BoptestGymEnv``, sent with each episode reset, which sets the warmup communication grid. Default is ``None``. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Add an optional in-process backend, selected with ``local=True``, which runs BOPTEST's ``TestCase`` in the calling process instead of over HTTP. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 - Request only the KPIs the reward reads, listed in the new ``REWARD_KPIS``, rather than the full set on every control step. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
 
 ## BOPTEST-Gym v0.8.0
