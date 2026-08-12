@@ -3,6 +3,13 @@
 BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simplicity, the first two digits of the version number match the same two digits of the BOPTEST version of which BOPTEST-Gym is compatible with. For example, BOPTEST-Gym v0.7.x is compatible with BOPTEST v0.7.x. The last digit is reserved for other internal edits specific to this repository only. See [here](https://github.com/ibpsa/project1-boptest/blob/master/releasenotes.md) for BOPTEST release notes. 
 
 
+## BOPTEST-Gym development
+
+- Route every request to BOPTEST through a new ``BoptestClient`` object instead of calling ``requests`` inline in twenty one places. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Add a ``fast`` argument to ``BoptestGymEnv`` that asks the BOPTEST runtime for its low-overhead simulation path when selecting the test case. Default is ``False``. A BOPTEST that does not support the option ignores it. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Add a ``warmup_interval`` argument to ``BoptestGymEnv``, sent when initializing on each episode reset, which coarsens the warmup simulation. Default is ``None``, which leaves the key out of the request so that BOPTEST keeps its own 30 s grid, the previous behaviour. A BOPTEST that does not support it ignores it. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+- Request only the KPIs that the reward reads, listed in the new ``REWARD_KPIS``, rather than the full set on every control step. A BOPTEST that does not support the ``names`` argument of the ``kpi`` API returns the full set, so this falls back silently. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+
 ## BOPTEST-Gym v0.8.0
 
 Released on 05/09/2025.
