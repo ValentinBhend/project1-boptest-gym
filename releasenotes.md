@@ -3,6 +3,10 @@
 BOPTEST-Gym has two main dependencies: BOPTEST and Stable-Baselines3. For simplicity, the first two digits of the version number match the same two digits of the BOPTEST version of which BOPTEST-Gym is compatible with. For example, BOPTEST-Gym v0.7.x is compatible with BOPTEST v0.7.x. The last digit is reserved for other internal edits specific to this repository only. See [here](https://github.com/ibpsa/project1-boptest/blob/master/releasenotes.md) for BOPTEST release notes. 
 
 
+## BOPTEST-Gym development
+
+- Add a pyproject.toml so the repository can be installed with pip or uv, instead of requiring users to place its directory on the Python path. No module is moved or renamed. This is for [#XXX](https://github.com/ibpsa/project1-boptest-gym/issues/XXX).
+
 ## BOPTEST-Gym v0.8.0
 
 Released on 05/09/2025.
