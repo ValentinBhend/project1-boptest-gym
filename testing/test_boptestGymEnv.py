@@ -749,6 +749,41 @@ class BoptestClientTest(unittest.TestCase):
         self.assertEqual(len(self.stub.calls), 1)
         self.assertIsNone(self.stub.calls[0][2].get('params'))
 
+    def test_a_supplied_client_is_used_instead_of_selecting(self):
+        '''Test that an environment given a client uses it and makes no
+        request of its own, which is how an alternative backend is supplied.
+
+        '''
+
+        class FakeClient(object):
+            testid = 'supplied-test-id'
+            payloads = {'name': {'name': 'a_case'},
+                        'measurements': {'reaTZon_y': {'Minimum': 250.,
+                                                       'Maximum': 400.}},
+                        'forecast_points': {},
+                        'inputs': {'oveHeaPumY_u': {'Minimum': 0., 'Maximum': 1.},
+                                   'oveHeaPumY_activate': {'Minimum': 0.,
+                                                           'Maximum': 1.}},
+                        'step': 900,
+                        'scenario': {'electricity_price': 'constant'}}
+
+            def get(self, endpoint, params=None):
+                return self.payloads[endpoint]
+
+        client = FakeClient()
+        env = BoptestGymEnv(url                 = url,
+                            testcase            = 'bestest_hydronic_heat_pump',
+                            client              = client,
+                            actions             = ['oveHeaPumY_u'],
+                            observations        = {'reaTZon_y':(280.,310.)},
+                            max_episode_length  = 24*3600,
+                            warmup_period       = 3600,
+                            step_period         = 900)
+
+        self.assertIs(env.client, client)
+        self.assertEqual(env.testid, 'supplied-test-id')
+        self.assertEqual(self.stub.calls, [])
+
 
 if __name__ == '__main__':
     # utilities.run_tests(os.path.basename(__file__))
@@ -756,3 +791,81 @@ if __name__ == '__main__':
     test_instance = BoptestGymVecTest()
     test_instance.setUp()
     test_instance.test_vectorized()
+
+class BridgeClientTest(unittest.TestCase):
+    '''Tests the out-of-process backend's client.
+
+    A stub server stands in for bridge.server, so these need neither a deployed
+    test case nor pyfmi.
+
+    '''
+
+    def setUp(self):
+        import socket, threading
+        from bridge.wire import CODECS, recv, send
+        self.codec = CODECS['json']
+        self.received = []
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        self.port = listener.getsockname()[1]
+
+        payloads = {'advance': {'reaTZon_y': 295.0},
+                    'kpi': {'cost_tot': 1.0, 'tdis_tot': 2.0},
+                    'forecast': {'TDryBul': [270.0, 271.0]}}
+
+        def serve():
+            conn, _ = listener.accept()
+            listener.close()
+            recv(conn, self.codec)
+            send(conn, self.codec, {'testid': 'stub'})
+            try:
+                while True:
+                    ops = recv(conn, self.codec)
+                    self.received.append(ops)
+                    send(conn, self.codec,
+                         [[200, 'ok', payloads.get(op, {})] for op, _ in ops])
+            except EOFError:
+                conn.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+
+    def test_a_step_costs_one_round_trip(self):
+        '''Test that the KPIs and forecast a step goes on to read come back
+        with the advance that precedes them, once the client has seen the
+        environment ask for them.
+
+        '''
+
+        from bridge import BridgeClient
+        client = BridgeClient(url='127.0.0.1:{0}'.format(self.port),
+                              testcase='bestest_hydronic_heat_pump')
+        self.addCleanup(client.stop)
+        self.assertEqual(client.testid, 'stub')
+
+        forecast = {'point_names': ['TDryBul'], 'horizon': 3600, 'interval': 900}
+        # first step: the client has not yet seen what follows an advance
+        client.post('advance', json={})
+        client.kpis(names=['cost_tot', 'tdis_tot'])
+        client.put('forecast', json=forecast)
+        first = client.calls
+
+        client.post('advance', json={})
+        client.kpis(names=['cost_tot', 'tdis_tot'])
+        client.put('forecast', json=forecast)
+        self.assertEqual(client.calls - first, 1)
+        self.assertEqual([op for op, _ in self.received[-1]],
+                         ['advance', 'kpi', 'forecast'])
+
+    def test_a_failed_operation_raises(self):
+        '''Test that BOPTEST's error contract survives the socket.'''
+
+        from bridge import BridgeClient
+        client = BridgeClient(url='127.0.0.1:{0}'.format(self.port),
+                              testcase='bestest_hydronic_heat_pump')
+        self.addCleanup(client.stop)
+        with mock.patch.object(client, '_rpc',
+                               return_value=[[400, 'bad input', None]]):
+            self.assertRaises(RuntimeError, client.post, 'advance', {})

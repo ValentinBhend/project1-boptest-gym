@@ -106,6 +106,38 @@ Then you can train an RL agent with parallel learning with the vectorized BOPTES
 
 Independently of those, the reward now asks BOPTEST only for the KPIs it reads (`cost_tot` and `tdis_tot`, listed in `REWARD_KPIS`) rather than for all of them. The peak demand KPIs are maxima over the whole test period and so get more expensive the longer an episode runs, while these two do not. A BOPTEST that does not support requesting a subset returns the full set, which is still correct, so this needs no configuration and never fails.
 
+### Note 4: on running the test case in its own process
+
+A control step over the REST API carries three HTTP requests through the web tier, a message broker and a worker. `bridge` runs the test case in a process of its own and talks to it over one socket, which on `bestest_hydronic_heat_pump` at a 900 s step costs 9.7 ms against 18.1 ms, measured alternately in one session with the options in Note 3 already applied to both.
+
+Start it with the image your BOPTEST checkout already builds, and nothing else — no web tier, no broker, no object store:
+
+```bash
+BOPTEST_SRC=/path/to/project1-boptest docker compose -f bridge/compose.yml up
+```
+
+Then pass a client, and the rest of the environment is unchanged:
+
+```python
+from bridge import BridgeClient
+
+env = BoptestGymEnv(testcase='bestest_hydronic_heat_pump',
+                    client=BridgeClient(testcase='bestest_hydronic_heat_pump',
+                                        select_options={'direct_step': True}),
+                    ...)
+```
+
+The agent's environment needs none of BOPTEST's: `BridgeClient` imports only the standard library, so pyfmi, the numpy BOPTEST pins and `libgfortran.so.4` all stay in the container. Each environment gets its own process and its own FMU, so `canBeInstantiatedOnlyOncePerProcess` is satisfied however many you run, a test case that hangs in the solver can be killed, and closing the connection ends it, so an agent that crashes leaves nothing behind.
+
+For several environments use `ThreadVecEnv` rather than the `SubprocVecEnv` of Note 2: the step is spent blocked on a socket, so threads overlap the test cases without a process and a pipe each.
+
+```python
+from bridge import ThreadVecEnv
+
+venv = ThreadVecEnv([make_env] * 4)
+```
+
+`BOPTEST_SRC` is the checkout you deploy BOPTEST from, which is where the test case FMUs live. `BOPTEST_BRIDGE_PORT` moves the port from its default of 5000, and `BOPTEST_BRIDGE_URL` tells the client where to find it.
 ## Versioning and main dependencies
 
 Current BOPTEST-Gym version is `v0.8.0` which is compatible with BOPTEST `v0.8.0` 
