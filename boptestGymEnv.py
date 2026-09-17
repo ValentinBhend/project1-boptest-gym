@@ -54,20 +54,24 @@ class BoptestClient(object):
 
         self.url = url.rstrip('/')
         self._kpi_subset_supported = True
-        self.testid = requests.post('{0}/testcases/{1}/select'.format(self.url, testcase),
-                                    json=select_options).json()['testid']
+        # A session keeps the connection open between requests.  Calling
+        # requests.post directly opens a new one, and a control step makes
+        # three requests.
+        self.session = requests.Session()
+        self.testid = self.session.post('{0}/testcases/{1}/select'.format(self.url, testcase),
+                                        json=select_options).json()['testid']
 
     def get(self, endpoint, params=None):
-        return requests.get('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                            params=params).json()['payload']
+        return self.session.get('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                                params=params).json()['payload']
 
     def put(self, endpoint, json=None):
-        return requests.put('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                            json=json).json()['payload']
+        return self.session.put('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                                json=json).json()['payload']
 
     def post(self, endpoint, json=None):
-        return requests.post('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
-                             json=json).json()['payload']
+        return self.session.post('{0}/{1}/{2}'.format(self.url, endpoint, self.testid),
+                                 json=json).json()['payload']
 
     def kpis(self, names=None):
         '''Return the core KPIs, optionally only the ones named.
@@ -85,7 +89,8 @@ class BoptestClient(object):
         return self.get('kpi')
 
     def stop(self):
-        requests.put('{0}/stop/{1}'.format(self.url, self.testid))
+        self.session.put('{0}/stop/{1}'.format(self.url, self.testid))
+        self.session.close()
 
 
 class BoptestGymEnv(gym.Env):

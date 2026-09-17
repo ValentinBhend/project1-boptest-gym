@@ -660,6 +660,13 @@ class StubRequests(object):
     def post(self, url, **kwargs):
         return self._record('post', url, **kwargs)
 
+    def Session(self):
+        '''The client keeps one connection; the stub is its own session.'''
+        return self
+
+    def close(self):
+        pass
+
 
 class BoptestClientTest(unittest.TestCase):
     '''Tests the client that carries every request to BOPTEST.
