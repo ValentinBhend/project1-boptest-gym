@@ -123,7 +123,8 @@ class BoptestGymEnv(gym.Env):
                  direct_step        = False,
                  fmu_log_level      = None,
                  log_level          = None,
-                 warmup_interval    = None):
+                 warmup_interval    = None,
+                 client             = None):
         '''
         Parameters
         ----------
@@ -225,6 +226,11 @@ class BoptestGymEnv(gym.Env):
             that does not support the option ignores it.
             Default is None, which leaves the grid to BOPTEST, where it is
             30 s.
+        client: object
+            Object carrying the requests to BOPTEST, used instead of building
+            a BoptestClient over REST.  Anything offering the get, put, post,
+            kpis and stop methods of BoptestClient will do.
+            Default is None.
 
         '''
         
@@ -268,8 +274,9 @@ class BoptestGymEnv(gym.Env):
             self.client.stop()
         except:
             pass
-        # Select and start a new test case
-        self.client = BoptestClient(url, testcase, self._select_options())
+        # Select and start a new test case, unless a client was supplied
+        self.client = client if client is not None \
+            else BoptestClient(url, testcase, self._select_options())
         self.testid = self.client.testid
         # Test case name
         self.name = self.client.get('name')

@@ -1,0 +1,19 @@
+# Serve BOPTEST test cases for BoptestGymEnv, one process per environment.
+#
+#   BOPTEST_SRC=../project1-boptest docker compose -f bridge/compose.yml up
+#
+# BOPTEST_SRC is the checkout you already deploy BOPTEST from; it holds the
+# test case FMUs.  The image is the one that checkout's `docker compose up`
+# builds.  Nothing else is needed: no redis, no web tier, no object store.
+services:
+  boptest:
+    image: ${BOPTEST_WORKER_IMAGE:-project1-boptest-worker}
+    entrypoint: ["/miniconda/envs/pyfmi3/bin/python", "-m", "bridge.server"]
+    environment:
+      BOPTEST_ROOT: /boptest_src
+      PYTHONPATH: /boptestgym
+    ports:
+      - "127.0.0.1:${BOPTEST_BRIDGE_PORT:-5000}:5000"
+    volumes:
+      - ${BOPTEST_SRC:?set BOPTEST_SRC to your BOPTEST checkout}:/boptest_src:ro
+      - ..:/boptestgym:ro
