@@ -2,8 +2,7 @@
 
 Interchangeable with BoptestClient, so BoptestGymEnv needs no knowledge of it,
 and written against the standard library alone: the process running the agent
-never imports pyfmi, BOPTEST's numpy pin, or anything that links
-libgfortran.so.4.
+never imports pyfmi, BOPTEST's numpy pin, or anything linking libgfortran.
 
     from bridge import BridgeClient
     env = BoptestGymEnv(testcase='bestest_hydronic_heat_pump',
@@ -17,21 +16,23 @@ import os
 import socket
 import time
 
-from .wire import CODECS, recv, send
+from .wire import recv, send
 
 DEFAULT_URL = os.environ.get('BOPTEST_BRIDGE_URL', '127.0.0.1:5000')
 
-# Results that stay valid until the simulation moves on, and so can be fetched
-# in the same round trip as the advance that precedes them.
-PREFETCHABLE = ('kpi', 'forecast')
+# Calls whose answer holds until the simulation moves on, and so can be fetched
+# in the same round trip as the advance before them.
+PREFETCHABLE = (('get', 'kpi'), ('put', 'forecast'))
+
+# Calls that move the simulation, after which anything cached is stale.
+MOVES = (('put', 'initialize'), ('put', 'step'), ('put', 'scenario'))
 
 
 class BridgeClient(object):
 
     def __init__(self, url=None, testcase=None, select_options=None,
-                 codec='json', timeout=300.0, prefetch=True):
+                 timeout=300.0, prefetch=True):
         self.url = url or DEFAULT_URL
-        self._codec = CODECS[codec]
         self._prefetch = prefetch
         self._plan = []
         self._cache = {}
@@ -42,10 +43,9 @@ class BridgeClient(object):
         host, _, port = self.url.rpartition(':')
         host = (host or '127.0.0.1').replace('http://', '').strip('/')
         self._sock = self._connect(host, int(port), timeout)
-        send(self._sock, self._codec,
-             {'op': 'select', 'testcase': testcase,
-              'options': select_options or {}})
-        reply = recv(self._sock, self._codec)
+        send(self._sock,
+             {'op': 'select', 'testcase': testcase, 'options': select_options or {}})
+        reply = recv(self._sock)
         if 'error' in reply:
             raise RuntimeError('BOPTEST could not start {0!r}: {1}'
                                .format(testcase, reply['error']))
@@ -68,11 +68,10 @@ class BridgeClient(object):
                            'one with:  docker compose -f bridge/compose.yml up'
                            .format(host, port, timeout, last))
 
-    # --- transport ----------------------------------------------------------
-    def _rpc(self, ops):
+    def _rpc(self, calls):
         self.calls += 1
-        send(self._sock, self._codec, ops)
-        return recv(self._sock, self._codec)
+        send(self._sock, calls)
+        return recv(self._sock)
 
     @staticmethod
     def _payload(endpoint, result):
@@ -82,62 +81,54 @@ class BridgeClient(object):
                                .format(endpoint, status, message))
         return payload
 
-    def _call(self, op, args):
-        if op not in ('advance', 'initialize'):
-            self._plan.append((op, args))
-        key = (op, _freeze(args))
+    def _call(self, method, endpoint, payload):
+        if (method, endpoint) in MOVES:
+            self._cache = {}
+            if endpoint == 'initialize':
+                self._plan = []
+        else:
+            self._plan.append((method, endpoint, payload))
+        key = (method, endpoint, _freeze(payload))
         if key in self._cache:
             return self._cache.pop(key)
-        return self._payload(op, self._rpc([(op, args)])[0])
+        return self._payload(endpoint, self._rpc([(method, endpoint, payload)])[0])
 
     def _advance(self, inputs):
         '''Advance, bringing back whatever the last step went on to ask for.'''
 
-        ops = [('advance', inputs)]
-        extras = []
+        extras, seen = [], set()
         if self._prefetch:
-            seen = set()
-            for op, args in self._plan:
-                key = (op, _freeze(args))
-                if op in PREFETCHABLE and key not in seen:
+            for method, endpoint, payload in self._plan:
+                key = (method, endpoint, _freeze(payload))
+                if (method, endpoint) in PREFETCHABLE and key not in seen:
                     seen.add(key)
-                    extras.append((op, args))
-        results = self._rpc(ops + extras)
-        self._cache = {(op, _freeze(args)): self._payload(op, result)
-                       for (op, args), result in zip(extras, results[1:])}
+                    extras.append((method, endpoint, payload))
+        results = self._rpc([('post', 'advance', inputs)] + extras)
+        self._cache = {(m, e, _freeze(p)): self._payload(e, r)
+                       for (m, e, p), r in zip(extras, results[1:])}
         self._plan = []
         return self._payload('advance', results[0])
 
     # --- the BoptestClient interface ----------------------------------------
     def get(self, endpoint, params=None):
+        params = dict(params or {})
         if endpoint == 'kpi':
-            names = None
-            if params and params.get('names'):
-                names = [n for n in str(params['names']).split(',') if n]
-            return self._call('kpi', {'names': names})
-        return self._call({'name': 'name', 'measurements': 'measurements',
-                           'inputs': 'inputs', 'forecast_points': 'forecast_points',
-                           'step': 'get_step', 'scenario': 'get_scenario',
-                           'version': 'version'}[endpoint], {})
+            names = params.get('names')
+            if isinstance(names, str):
+                names = [n for n in names.split(',') if n]
+            params = {'names': list(names) if names else None}
+        return self._call('get', endpoint, params)
 
     def put(self, endpoint, json=None):
-        json = json or {}
-        if endpoint in ('initialize', 'step', 'scenario'):
-            self._cache = {}
-            if endpoint == 'initialize':
-                self._plan = []
-            return self._call(endpoint, json)
-        if endpoint in ('results', 'forecast'):
-            return self._call(endpoint, json)
-        raise ValueError('Unsupported PUT endpoint "{0}"'.format(endpoint))
+        return self._call('put', endpoint, json or {})
 
     def post(self, endpoint, json=None):
         if endpoint == 'advance':
             return self._advance(json or {})
-        raise ValueError('Unsupported POST endpoint "{0}"'.format(endpoint))
+        return self._call('post', endpoint, json or {})
 
     def kpis(self, names=None):
-        return self._call('kpi', {'names': list(names) if names else None})
+        return self.get('kpi', {'names': list(names) if names else None})
 
     def stop(self):
         '''Close the connection, which ends the test case's process.'''

@@ -129,13 +129,7 @@ env = BoptestGymEnv(testcase='bestest_hydronic_heat_pump',
 
 The agent's environment needs none of BOPTEST's: `BridgeClient` imports only the standard library, so pyfmi, the numpy BOPTEST pins and `libgfortran.so.4` all stay in the container. Each environment gets its own process and its own FMU, so `canBeInstantiatedOnlyOncePerProcess` is satisfied however many you run, a test case that hangs in the solver can be killed, and closing the connection ends it, so an agent that crashes leaves nothing behind.
 
-For several environments use `ThreadVecEnv` rather than the `SubprocVecEnv` of Note 2: the step is spent blocked on a socket, so threads overlap the test cases without a process and a pipe each.
-
-```python
-from bridge import ThreadVecEnv
-
-venv = ThreadVecEnv([make_env] * 4)
-```
+For several environments use `SubprocVecEnv` as in Note 2; each environment gets its own worker.
 
 `BOPTEST_SRC` is the checkout you deploy BOPTEST from, which is where the test case FMUs live. `BOPTEST_BRIDGE_PORT` moves the port from its default of 5000, and `BOPTEST_BRIDGE_URL` tells the client where to find it.
 ## Versioning and main dependencies

@@ -802,8 +802,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def setUp(self):
         import socket, threading
-        from bridge.wire import CODECS, recv, send
-        self.codec = CODECS['json']
+        from bridge.wire import recv, send
         self.received = []
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind(('127.0.0.1', 0))
@@ -817,14 +816,14 @@ class BridgeClientTest(unittest.TestCase):
         def serve():
             conn, _ = listener.accept()
             listener.close()
-            recv(conn, self.codec)
-            send(conn, self.codec, {'testid': 'stub'})
+            recv(conn)
+            send(conn, {'testid': 'stub'})
             try:
                 while True:
-                    ops = recv(conn, self.codec)
+                    ops = recv(conn)
                     self.received.append(ops)
-                    send(conn, self.codec,
-                         [[200, 'ok', payloads.get(op, {})] for op, _ in ops])
+                    send(conn,
+                         [[200, 'ok', payloads.get(e, {})] for _, e, _p in ops])
             except EOFError:
                 conn.close()
 
@@ -856,7 +855,7 @@ class BridgeClientTest(unittest.TestCase):
         client.kpis(names=['cost_tot', 'tdis_tot'])
         client.put('forecast', json=forecast)
         self.assertEqual(client.calls - first, 1)
-        self.assertEqual([op for op, _ in self.received[-1]],
+        self.assertEqual([e for _, e, _p in self.received[-1]],
                          ['advance', 'kpi', 'forecast'])
 
     def test_a_failed_operation_raises(self):

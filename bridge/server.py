@@ -19,33 +19,33 @@ import socket
 import sys
 
 from .case import TestCaseRunner
-from .wire import CODECS, recv, send
+from .wire import recv, send
 
 
-def serve_one(conn, boptest_root, codec):
+def serve_one(conn, boptest_root):
     '''Run one test case for one connection, then exit.'''
 
     runner = None
     try:
-        request = recv(conn, codec)
+        request = recv(conn)
         if request.get('op') != 'select':
-            send(conn, codec, {'error': 'expected select, got %r' % request.get('op')})
+            send(conn, {'error': 'expected select, got %r' % request.get('op')})
             return
         runner = TestCaseRunner(boptest_root, request['testcase'],
                                 request.get('testcase_dir'),
                                 request.get('options'))
-        send(conn, codec, {'testid': str(os.getpid())})
+        send(conn, {'testid': str(os.getpid())})
         while True:
             try:
-                ops = recv(conn, codec)
+                calls = recv(conn)
             except EOFError:
                 return
-            send(conn, codec, runner.batch(ops))
+            send(conn, runner.batch(calls))
     except EOFError:
         return
     except Exception as exc:
         try:
-            send(conn, codec, {'error': '{0}: {1}'.format(type(exc).__name__, exc)})
+            send(conn, {'error': '{0}: {1}'.format(type(exc).__name__, exc)})
         except Exception:
             pass
     finally:
@@ -57,7 +57,7 @@ def serve_one(conn, boptest_root, codec):
             pass
 
 
-def serve(host, port, boptest_root, codec):
+def serve(host, port, boptest_root):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((host, port))
@@ -71,7 +71,7 @@ def serve(host, port, boptest_root, codec):
         if os.fork() == 0:
             listener.close()
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-            serve_one(conn, boptest_root, codec)
+            serve_one(conn, boptest_root)
             os._exit(0)
         conn.close()
 
@@ -82,13 +82,12 @@ def main(argv=None):
     parser.add_argument('--port', type=int,
                         default=int(os.environ.get('BOPTEST_BRIDGE_PORT', 5000)))
     parser.add_argument('--boptest-root', default=os.environ.get('BOPTEST_ROOT'))
-    parser.add_argument('--codec', default='json', choices=sorted(CODECS))
     args = parser.parse_args(argv)
     if not args.boptest_root:
         raise SystemExit('Set BOPTEST_ROOT or pass --boptest-root: the server '
                          'needs a BOPTEST tree holding the test case FMUs.')
     logging.disable(logging.CRITICAL)
-    serve(args.host, args.port, args.boptest_root, CODECS[args.codec])
+    serve(args.host, args.port, args.boptest_root)
 
 
 if __name__ == '__main__':
